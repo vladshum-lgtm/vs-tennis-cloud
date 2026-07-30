@@ -319,6 +319,11 @@ Return ONLY valid JSON, no markdown fences, no text before or after. Schema:
 ```
 
 Rules for the contract:
+- If the person has given a phone number or email anywhere in the conversation, you
+     MUST return a `lead_capture` object that includes it (plus any name, child age, and
+     location you have). Never drop contact info the person provided — populating
+     `lead_capture` is how the academy saves the lead. This is required even if you are
+     also asking a follow-up question in the same reply.
 - Never invent a fact (a price, a slot, a coach's availability, a session count) that
   is not in your inputs. If a needed fact is missing, do not fill it in — ask for it
   or escalate.
