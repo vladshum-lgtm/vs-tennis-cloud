@@ -6,6 +6,13 @@ export const WIX = {
     "https://www.wixapis.com/_api/service-availability/v2/time-slots",
 };
 
+// GoHighLevel (CRM). Token is a secret and lives in env (GHL_API_TOKEN).
+// The location ID is not a secret. Confirm it in GHL if leads don't land.
+export const GHL = {
+  locationId: process.env.GHL_LOCATION_ID || "0vdJmqV3VXu2eENTjxn7",
+  upsertEndpoint: "https://services.leadconnectorhq.com/contacts/upsert",
+};
+
 // Wix Bookings service IDs.
 export const SERVICE_IDS = {
   private: "27cd2176-c478-4bd1-9093-e8f3258db023",
@@ -14,7 +21,6 @@ export const SERVICE_IDS = {
   redBallStPete: "957a0152-4e52-4c15-8623-8dccf350f6b5",
   orangeBallStPete: "5594ef78-0e08-42cb-9e81-aea16e6d96eb",
   greenDot: "47280c89-b65e-40d6-b766-261c7c422d05",
-  // TODO: add remaining service IDs as needed (Orange Ball WC, Adults, etc.).
 };
 
 // Wix Bookings location IDs.
