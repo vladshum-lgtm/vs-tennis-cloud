@@ -8,6 +8,7 @@ import cors from "cors";
 import { generateReply } from "./brain.js";
 import { getAvailability, formatAvailability } from "./lib/wixBookings.js";
 import { upsertLead } from "./lib/ghl.js";
+import { logRow } from "./lib/sheetLog.js";
 import { SERVICE_IDS } from "./config.js";
 
 const app = express();
@@ -19,8 +20,7 @@ const allowed = (process.env.ALLOWED_ORIGINS || "")
   .filter(Boolean);
 app.use(cors({ origin: allowed.length ? allowed : true }));
 
-// --- Session history: in-memory for now. ---
-const sessions = new Map(); // sessionId -> [{role, text}]
+const sessions = new Map();
 const MAX_HISTORY = 10;
 
 function getHistory(id) {
@@ -97,11 +97,9 @@ app.post("/chat", async (req, res) => {
 
   if (result.escalate) {
     console.log("ESCALATE:", JSON.stringify(result.escalate));
-    // TODO: notify the owner (webhook / GHL) using OWNER_NOTIFY_WEBHOOK.
   }
   if (result.coach_confirmation) {
     console.log("COACH_CONFIRMATION:", JSON.stringify(result.coach_confirmation));
-    // TODO: send the coach the templated confirmation text; hold the booking.
   }
   if (result.lead_capture) {
     console.log("LEAD_CAPTURE:", JSON.stringify(result.lead_capture));
@@ -116,6 +114,21 @@ app.post("/chat", async (req, res) => {
   const reply =
     result.reply ||
     (result.escalate ? "Let me check on that and Vlad will follow up shortly." : "");
+
+  logRow([
+    new Date().toISOString(),
+    sessionId,
+    "web",
+    message,
+    reply,
+    result.intent || "",
+    result.language || "",
+    result.escalate ? result.escalate.reason : "",
+    result.coach_confirmation ? "yes" : "",
+    result.lead_capture && (result.lead_capture.phone || result.lead_capture.email)
+      ? "yes"
+      : "",
+  ]);
 
   return res.json({ reply, meta: { intent: result.intent, language: result.language } });
 });
