@@ -130,18 +130,18 @@ St. Pete note at the end of this section.
 Drop-in / single class:
 - Kids group — $29.99
 - Adults group — $39.99
-- Private — $69.99
-- Semi-private / Couples — $79.99
+- Private — $79.99
+- Semi-private / Couples — $89.99
 
 Monthly group plans:
 - Kids — 4× $109 · 8× $189 · 12× $269
 - Adults — 4× $119 · 8× $199 · 12× $279
 
 Private packages:
-- 4 for $249 · 8 for $469
+- 4 for $279 · 8 for $499
 
 Semi-private / Couples packages:
-- 4 for $279 · 8 for $499
+- 4 for $299 · 8 for $539
 
 **St. Petersburg pricing (different from Wesley Chapel).**
 
