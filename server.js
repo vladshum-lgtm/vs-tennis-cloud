@@ -3,6 +3,7 @@
 // so the brain logic lives in exactly one place.
 
 import "dotenv/config";
+import crypto from "crypto";
 import express from "express";
 import cors from "cors";
 import { generateReply } from "./brain.js";
@@ -131,6 +132,72 @@ app.post("/chat", async (req, res) => {
   ]);
 
   return res.json({ reply, meta: { intent: result.intent, language: result.language } });
+});
+
+// Constant-time compare so the shared secret can't be guessed a byte at a time.
+function secretMatches(given) {
+  const expected = process.env.WIX_WEBHOOK_SECRET || "";
+  if (!expected || typeof given !== "string" || given.length !== expected.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+}
+
+// POST /wix-lead — a Wix form submission lands here (via a Wix automation/webhook)
+// and becomes a GHL contact. Same upsert path as chat leads, different tags so a
+// GHL workflow can target form leads on their own.
+app.post("/wix-lead", async (req, res) => {
+  if (!process.env.WIX_WEBHOOK_SECRET) {
+    console.error("WIX_LEAD: WIX_WEBHOOK_SECRET is not set — rejecting.");
+    return res.status(401).json({ error: "unauthorized" });
+  }
+
+  const given = req.get("x-wix-secret") || req.query.secret;
+  if (!secretMatches(given)) {
+    console.warn("WIX_LEAD: rejected request with bad or missing secret");
+    return res.status(401).json({ error: "unauthorized" });
+  }
+
+  const { name, email, phone, message, notes } = req.body || {};
+  const note = message || notes || "";
+
+  if (!email && !phone) {
+    console.warn("WIX_LEAD: submission had neither email nor phone — ignoring.");
+    return res.status(400).json({ error: "email or phone is required" });
+  }
+
+  console.log(
+    "WIX_LEAD:",
+    JSON.stringify({ name: name || "", email: email || "", phone: phone || "", note })
+  );
+
+  // Non-fatal: never fail the form submission back to Wix over a CRM hiccup.
+  let crmOk = false;
+  try {
+    const r = await upsertLead(
+      { name, email, phone },
+      { source: "wix form", tags: ["wix-form-lead"] }
+    );
+    crmOk = !!r.ok;
+    console.log("WIX_LEAD GHL upsert:", JSON.stringify(r));
+  } catch (err) {
+    console.error("WIX_LEAD GHL upsert failed:", err.message);
+  }
+
+  logRow([
+    new Date().toISOString(),
+    email || phone || "",
+    "wix-form",
+    note,
+    "",
+    "wix_form_lead",
+    "",
+    "",
+    "",
+    "yes",
+  ]);
+
+  return res.json({ ok: true, crm: crmOk });
 });
 
 const PORT = process.env.PORT || 8787;
