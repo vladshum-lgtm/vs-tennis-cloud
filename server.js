@@ -143,6 +143,55 @@ function secretMatches(given) {
   return crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
 }
 
+// Wix sends form answers as an array of objects carrying a field title and an input
+// value, and the array's position in the payload varies by automation/webhook version
+// (submissions, data.submissions, contact.…). So walk the whole body and collect every
+// title/value-shaped pair instead of guessing at a path.
+const FIELD_TITLE_KEYS = ["title", "label", "fieldName", "fieldTitle", "name", "key"];
+const FIELD_VALUE_KEYS = ["value", "inputValue", "fieldValue", "values", "answer", "text"];
+
+function collectWixFields(node, out = [], depth = 0) {
+  if (!node || typeof node !== "object" || depth > 8) return out;
+  if (Array.isArray(node)) {
+    for (const item of node) collectWixFields(item, out, depth + 1);
+    return out;
+  }
+  const titleKey = FIELD_TITLE_KEYS.find((k) => typeof node[k] === "string");
+  const valueKey = FIELD_VALUE_KEYS.find((k) => node[k] != null);
+  if (titleKey && valueKey) out.push({ title: node[titleKey], value: node[valueKey] });
+  for (const v of Object.values(node)) collectWixFields(v, out, depth + 1);
+  return out;
+}
+
+// An input value can be a string, a list (checkboxes), or an object ({value}, {first,last}).
+function flattenWixValue(v) {
+  if (v == null) return "";
+  if (typeof v === "string") return v.trim();
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return v.map(flattenWixValue).filter(Boolean).join(", ");
+  if (typeof v === "object") {
+    for (const k of ["value", "text", "formattedValue", "label", "email", "phone", "number"]) {
+      if (v[k] != null && typeof v[k] !== "object") return flattenWixValue(v[k]);
+    }
+    const parts = [v.first, v.firstName, v.middle, v.last, v.lastName].filter(
+      (p) => typeof p === "string" && p.trim()
+    );
+    if (parts.length) return parts.join(" ").trim();
+  }
+  return "";
+}
+
+function pickByTitle(fields, patterns) {
+  for (const pattern of patterns) {
+    for (const f of fields) {
+      if (!pattern.test(String(f.title || "").trim())) continue;
+      const value = flattenWixValue(f.value);
+      if (value) return value;
+    }
+  }
+  return "";
+}
+
 // POST /wix-lead — a Wix form submission lands here (via a Wix automation/webhook)
 // and becomes a GHL contact. Same upsert path as chat leads, different tags so a
 // GHL workflow can target form leads on their own.
@@ -158,18 +207,57 @@ app.post("/wix-lead", async (req, res) => {
     return res.status(401).json({ error: "unauthorized" });
   }
 
-  const { name, email, phone, message, notes } = req.body || {};
-  const note = message || notes || "";
+  // TEMPORARY debug logging — drop once the real Wix payload shape is confirmed.
+  console.log("WIX_RAW:", JSON.stringify(req.body));
 
+  const body = req.body || {};
+  const fields = collectWixFields(body);
+  // Some payloads also carry a structured contact object alongside the field array.
+  const contact = body.contact || (body.data && body.data.contact) || {};
+
+  const first = pickByTitle(fields, [/^first\s*name$/i, /\bfirst\s*name\b/i]);
+  const last = pickByTitle(fields, [/^last\s*name$/i, /\blast\s*name\b/i]);
+  const fullName = pickByTitle(fields, [/^(full\s*)?name$/i, /\byour\s*name\b/i]);
+
+  // Flat {name,email,phone} bodies still win; nested form fields fill the gaps.
+  const name =
+    (typeof body.name === "string" && body.name.trim()) ||
+    [first, last].filter(Boolean).join(" ").trim() ||
+    fullName ||
+    flattenWixValue(contact.name) ||
+    "";
+  const email =
+    (typeof body.email === "string" && body.email.trim()) ||
+    pickByTitle(fields, [/^e-?mail$/i, /\be-?mail\b/i]) ||
+    flattenWixValue(contact.email || contact.emails) ||
+    "";
+  const phone =
+    (typeof body.phone === "string" && body.phone.trim()) ||
+    pickByTitle(fields, [/^phone$/i, /\bphone\b/i, /\bmobile\b/i]) ||
+    flattenWixValue(contact.phone || contact.phones) ||
+    "";
+
+  const extras = [
+    ["Preferred contact method", pickByTitle(fields, [/preferred\s*contact/i])],
+    ["Child's age", pickByTitle(fields, [/child.?s?\s*age/i, /^age$/i])],
+    ["Program for", pickByTitle(fields, [/who\s*is\s*the\s*program\s*for/i])],
+  ].filter(([, v]) => v);
+
+  const note = [
+    body.message || body.notes || pickByTitle(fields, [/\bmessage\b/i, /\bnotes?\b/i]),
+    ...extras.map(([label, v]) => `${label}: ${v}`),
+  ]
+    .filter(Boolean)
+    .join(" | ");
+
+  console.log("WIX_LEAD:", JSON.stringify({ name, email, phone, note }));
+
+  // Always 200 back to Wix — a missing email/phone is a form-content problem, not a
+  // technical failure, and a non-2xx makes Wix flag the automation as broken.
   if (!email && !phone) {
-    console.warn("WIX_LEAD: submission had neither email nor phone — ignoring.");
-    return res.status(400).json({ error: "email or phone is required" });
+    console.warn("WIX_LEAD: submission had neither email nor phone — skipping GHL upsert.");
+    return res.json({ ok: true, crm: false, skipped: "no email or phone" });
   }
-
-  console.log(
-    "WIX_LEAD:",
-    JSON.stringify({ name: name || "", email: email || "", phone: phone || "", note })
-  );
 
   // Non-fatal: never fail the form submission back to Wix over a CRM hiccup.
   let crmOk = false;
