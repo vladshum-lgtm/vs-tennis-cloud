@@ -192,6 +192,19 @@ function pickByTitle(fields, patterns) {
   return "";
 }
 
+// The form's "Preferred contact method" answer -> a GHL tag, so a workflow can
+// reach a lead the way they asked. Unknown or missing answers get no tag.
+const CONTACT_PREF_TAGS = {
+  "email": "pref-email",
+  "text message": "pref-text",
+  "call": "pref-call",
+};
+
+function contactPrefTags(value) {
+  const tag = CONTACT_PREF_TAGS[String(value || "").trim().toLowerCase()];
+  return tag ? [tag] : [];
+}
+
 // POST /wix-lead — a Wix form submission lands here (via a Wix automation/webhook)
 // and becomes a GHL contact. Same upsert path as chat leads, different tags so a
 // GHL workflow can target form leads on their own.
@@ -237,8 +250,10 @@ app.post("/wix-lead", async (req, res) => {
     flattenWixValue(contact.phone || contact.phones) ||
     "";
 
+  const contactPref = pickByTitle(fields, [/preferred\s*contact/i]);
+
   const extras = [
-    ["Preferred contact method", pickByTitle(fields, [/preferred\s*contact/i])],
+    ["Preferred contact method", contactPref],
     ["Child's age", pickByTitle(fields, [/child.?s?\s*age/i, /^age$/i])],
     ["Program for", pickByTitle(fields, [/who\s*is\s*the\s*program\s*for/i])],
   ].filter(([, v]) => v);
@@ -264,7 +279,7 @@ app.post("/wix-lead", async (req, res) => {
   try {
     const r = await upsertLead(
       { name, email, phone },
-      { source: "wix form", tags: ["wix-form-lead"] }
+      { source: "wix form", tags: ["wix-form-lead", ...contactPrefTags(contactPref)] }
     );
     crmOk = !!r.ok;
     console.log("WIX_LEAD GHL upsert:", JSON.stringify(r));
