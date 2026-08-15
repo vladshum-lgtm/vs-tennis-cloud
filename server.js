@@ -195,9 +195,9 @@ function pickByTitle(fields, patterns) {
 // The form's "Preferred contact method" answer -> a GHL tag, so a workflow can
 // reach a lead the way they asked. Unknown or missing answers get no tag.
 const CONTACT_PREF_TAGS = {
-  "email": "pref-email",
+  "phone call": "pref-call",
   "text message": "pref-text",
-  "call": "pref-call",
+  "email": "pref-email",
 };
 
 function contactPrefTags(value) {
