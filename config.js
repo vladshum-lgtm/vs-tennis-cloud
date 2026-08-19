@@ -10,6 +10,8 @@ export const WIX = {
 // The location ID is not a secret. Confirm it in GHL if leads don't land.
 export const GHL = {
   locationId: process.env.GHL_LOCATION_ID || "0vdJmqV3VXu2eENTjxn7",
+  apiBase: "https://services.leadconnectorhq.com",
+  apiVersion: "2021-07-28",
   upsertEndpoint: "https://services.leadconnectorhq.com/contacts/upsert",
 };
 

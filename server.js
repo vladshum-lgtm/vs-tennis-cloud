@@ -8,7 +8,7 @@ import express from "express";
 import cors from "cors";
 import { generateReply } from "./brain.js";
 import { getAvailability, formatAvailability } from "./lib/wixBookings.js";
-import { upsertLead } from "./lib/ghl.js";
+import { upsertLead, findContactId, removeTags, addNote } from "./lib/ghl.js";
 import { logRow } from "./lib/sheetLog.js";
 import { SERVICE_IDS } from "./config.js";
 
@@ -205,6 +205,17 @@ function contactPrefTags(value) {
   return tag ? [tag] : [];
 }
 
+// A returning lead already carries these tags, so re-adding them is a no-op in GHL and
+// the "tag added" workflow never fires. Strip them first and the re-add becomes a real
+// tag-added event again. Every pref tag goes, not just this submission's — someone who
+// asked for a call last time and a text this time must not keep the stale one.
+const RETRIGGER_TAGS = ["wix-form-lead", "pref-call", "pref-text", "pref-email"];
+
+// GHL applies the delete asynchronously; re-adding in the same breath can land before
+// the removal settles and be swallowed as a no-op. A short pause makes the pair stick.
+const TAG_SETTLE_MS = 1200;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 // POST /wix-lead — a Wix form submission lands here (via a Wix automation/webhook)
 // and becomes a GHL contact. Same upsert path as chat leads, different tags so a
 // GHL workflow can target form leads on their own.
@@ -251,11 +262,13 @@ app.post("/wix-lead", async (req, res) => {
     "";
 
   const contactPref = pickByTitle(fields, [/preferred\s*contact/i]);
+  const childAge = pickByTitle(fields, [/child.?s?\s*age/i, /^age$/i]);
+  const programFor = pickByTitle(fields, [/who\s*is\s*the\s*program\s*for/i]);
 
   const extras = [
     ["Preferred contact method", contactPref],
-    ["Child's age", pickByTitle(fields, [/child.?s?\s*age/i, /^age$/i])],
-    ["Program for", pickByTitle(fields, [/who\s*is\s*the\s*program\s*for/i])],
+    ["Child's age", childAge],
+    ["Program for", programFor],
   ].filter(([, v]) => v);
 
   const note = [
@@ -274,7 +287,25 @@ app.post("/wix-lead", async (req, res) => {
     return res.json({ ok: true, crm: false, skipped: "no email or phone" });
   }
 
-  // Non-fatal: never fail the form submission back to Wix over a CRM hiccup.
+  // Every step below is non-fatal on its own: never fail the form submission back to
+  // Wix over a CRM hiccup, and never let a failed tag strip stop the upsert.
+
+  // 1. Clear the form tags off a returning contact so re-adding them counts as a new
+  //    "tag added" event. A brand-new lead has no contact to look up — skip straight
+  //    to the upsert, which fires the workflow on its own.
+  let contactId = null;
+  try {
+    contactId = await findContactId({ email, phone });
+    if (contactId) {
+      const r = await removeTags(contactId, RETRIGGER_TAGS);
+      console.log("WIX_LEAD GHL remove tags:", JSON.stringify(r));
+      await sleep(TAG_SETTLE_MS);
+    }
+  } catch (err) {
+    console.error("WIX_LEAD GHL tag reset failed:", err.message);
+  }
+
+  // 2. Upsert with the tags back on — this is the event the GHL workflow listens for.
   let crmOk = false;
   try {
     const r = await upsertLead(
@@ -282,9 +313,33 @@ app.post("/wix-lead", async (req, res) => {
       { source: "wix form", tags: ["wix-form-lead", ...contactPrefTags(contactPref)] }
     );
     crmOk = !!r.ok;
+    contactId = r.contactId || contactId;
     console.log("WIX_LEAD GHL upsert:", JSON.stringify(r));
   } catch (err) {
     console.error("WIX_LEAD GHL upsert failed:", err.message);
+  }
+
+  // 3. A note on every submission, so a repeat inquiry is visible on the timeline even
+  //    when the contact record itself comes back unchanged.
+  try {
+    if (contactId) {
+      const { dayOfWeek, now } = floridaNow();
+      const noteBody = [
+        "Wix form submission",
+        `Submitted: ${dayOfWeek}, ${now} (ET)`,
+        `Preferred contact method: ${contactPref || "—"}`,
+        `Child's age: ${childAge || "—"}`,
+        `Program for: ${programFor || "—"}`,
+        `Phone: ${phone || "—"}`,
+        `Email: ${email || "—"}`,
+      ].join("\n");
+      const r = await addNote(contactId, noteBody);
+      console.log("WIX_LEAD GHL note:", JSON.stringify(r));
+    } else {
+      console.warn("WIX_LEAD: no contact id — skipping note.");
+    }
+  } catch (err) {
+    console.error("WIX_LEAD GHL note failed:", err.message);
   }
 
   logRow([
