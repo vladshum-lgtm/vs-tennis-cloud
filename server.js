@@ -10,7 +10,7 @@ import { generateReply } from "./brain.js";
 import { getAvailability, formatAvailability } from "./lib/wixBookings.js";
 import { upsertLead, findContactId, removeTags, addNote } from "./lib/ghl.js";
 import { logRow } from "./lib/sheetLog.js";
-import { SERVICE_IDS } from "./config.js";
+import { SERVICE_IDS, GHL } from "./config.js";
 
 const app = express();
 app.use(express.json());
@@ -378,6 +378,44 @@ app.post("/wix-lead", async (req, res) => {
   ]);
 
   return res.json({ ok: true, crm: crmOk });
+});
+
+// GET /debug-fields — TEMPORARY. Lists the location's GHL custom fields so we can
+// confirm the real fieldKey values and dropdown options behind the /wix-lead upsert.
+// Gated on WIX_WEBHOOK_SECRET (?secret=… or x-wix-secret) like /wix-lead, since this
+// runs on the public Railway host and otherwise hands the CRM schema to anyone.
+// DELETE THIS ROUTE once the field keys are confirmed.
+app.get("/debug-fields", async (req, res) => {
+  const given = req.get("x-wix-secret") || req.query.secret;
+  if (!secretMatches(given)) {
+    console.warn("DEBUG_FIELDS: rejected request with bad or missing secret");
+    return res.status(401).json({ error: "unauthorized" });
+  }
+
+  const token = process.env.GHL_API_TOKEN;
+  if (!token) return res.status(500).json({ error: "GHL_API_TOKEN is not set" });
+
+  try {
+    const url = `${GHL.apiBase}/locations/${GHL.locationId}/customFields`;
+    const r = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Version: GHL.apiVersion,
+        Accept: "application/json",
+      },
+    });
+    const text = await r.text();
+    let payload;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = { raw: text.slice(0, 2000) };
+    }
+    return res.status(r.status).json(payload);
+  } catch (err) {
+    console.error("DEBUG_FIELDS failed:", err.message);
+    return res.status(502).json({ error: err.message });
+  }
 });
 
 const PORT = process.env.PORT || 8787;
