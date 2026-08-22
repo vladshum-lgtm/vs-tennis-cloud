@@ -310,7 +310,15 @@ app.post("/wix-lead", async (req, res) => {
   try {
     const r = await upsertLead(
       { name, email, phone },
-      { source: "wix form", tags: ["wix-form-lead", ...contactPrefTags(contactPref)] }
+      {
+        source: "wix form",
+        tags: ["wix-form-lead", ...contactPrefTags(contactPref)],
+        customFields: {
+          child_age: childAge,
+          program_for: programFor,
+          preferred_contact_method: contactPref,
+        },
+      }
     );
     crmOk = !!r.ok;
     contactId = r.contactId || contactId;
