@@ -205,6 +205,20 @@ function contactPrefTags(value) {
   return tag ? [tag] : [];
 }
 
+// The form asks for an age range; the GHL child_age field is a multi-select of single
+// ages. Expand the range into the individual options so the field actually matches.
+// An unrecognised answer goes through untouched rather than being dropped.
+const CHILD_AGE_OPTIONS = {
+  "3-7": ["3", "4", "5", "6", "7"],
+  "8-12": ["8", "9", "10", "11", "12"],
+  "12+": ["12", "13", "14", "15", "16", "17", "18"],
+};
+
+function childAgeValue(value) {
+  const key = String(value || "").trim();
+  return CHILD_AGE_OPTIONS[key] || key;
+}
+
 // A returning lead already carries these tags, so re-adding them is a no-op in GHL and
 // the "tag added" workflow never fires. Strip them first and the re-add becomes a real
 // tag-added event again. Every pref tag goes, not just this submission's — someone who
@@ -314,7 +328,7 @@ app.post("/wix-lead", async (req, res) => {
         source: "wix form",
         tags: ["wix-form-lead", ...contactPrefTags(contactPref)],
         customFields: {
-          child_age: childAge,
+          child_age: childAgeValue(childAge),
           program_for: programFor,
           preferred_contact_method: contactPref,
         },
